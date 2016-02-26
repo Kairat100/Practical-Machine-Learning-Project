@@ -5,18 +5,84 @@ date: "February 26, 2016"
 output: html_document
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Introduction
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+In this project, we will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participant.
 
-```{r}
-summary(cars)
+## Data Processing
+
+### Import the data
+#### Loading all needed libraries
+```{r, message=FALSE}
+# load the required packages
+library(caret); library(rattle); library(rpart); library(rpart.plot)
+library(randomForest); library(repmis)
 ```
 
-You can also embed plots, for example:
-
-```{r, echo=FALSE}
-plot(cars)
+#### Loading data
+```{r, message=FALSE}
+training <- read.csv("pml-training.csv", na.strings = c("NA", ""))
+testing <- read.csv("pml-testing.csv", na.strings = c("NA", ""))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Data cleaning
+We now delete columns (predictors) of the training set that contain any missing values. 
+```{r cleaning 1}
+training <- training[, colSums(is.na(training)) == 0]
+testing <- testing[, colSums(is.na(testing)) == 0]
+```
+We also remove the first seven predictors since these variables have little predicting power for the outcome `classe`.
+```{r cleaning 2}
+trainData <- training[, -c(1:7)]
+testData <- testing[, -c(1:7)]
+```
+
+### Data spliting
+```{r splitting}
+set.seed(7826) 
+inTrain <- createDataPartition(trainData$classe, p = 0.7, list = FALSE)
+train <- trainData[inTrain, ]
+valid <- trainData[-inTrain, ]
+```
+
+
+## Prediction Algorithms
+
+We use classification trees and random forests to predict the outcome. 
+
+### Classification trees
+In practice, $k = 5$ or $k = 10$ when doing k-fold cross validation. Here we consider 5-fold cross validation when implementing the algorithm to save a little computing time.
+
+```{r k-fold}
+control <- trainControl(method = "cv", number = 5)
+fit_rpart <- train(classe ~ ., data = train, method = "rpart", 
+                   trControl = control)
+print(fit_rpart, digits = 4)
+fancyRpartPlot(fit_rpart$finalModel)
+
+predict_rpart <- predict(fit_rpart, valid)
+
+(conf_rpart <- confusionMatrix(valid$classe, predict_rpart))
+(accuracy_rpart <- conf_rpart$overall[1])
+```
+From the confusion matrix, the accuracy rate is `r round(accuracy_rpart, 3)`, and so the out-of-sample error rate is `r 1 - round(accuracy_rpart, 3)`. Using classification tree does not predict the outcome `classe` very well.
+
+### Random forests
+Since classification tree method does not perform well, we try random forest method instead.
+```{r training}
+fit_rf <- train(classe ~ ., data = train, method = "rf", 
+                   trControl = control)
+print(fit_rf, digits = 4)
+# predict outcomes using validation set
+predict_rf <- predict(fit_rf, valid)
+# Show prediction result
+(conf_rf <- confusionMatrix(valid$classe, predict_rf))
+(accuracy_rf <- conf_rf$overall[1])
+```
+For this dataset, random forest method is way better than classification tree method. The accuracy rate is `r round(accuracy_rf, 3)`, and so the out-of-sample error rate is `r 1 - round(accuracy_rf, 3)`. This may be due to the fact that many predictors are highly correlated. Random forests chooses a subset of predictors at each split and *decorrelate* the trees. This leads to high accuracy, although this algorithm is sometimes difficult to interpret and computationally inefficient. 
+
+## Prediction on Testing Set
+We now use random forests to predict the outcome variable `classe` for the testing set. 
+```{r prediction}
+(predict(fit_rf, testData))
+```
